@@ -269,11 +269,11 @@ def run_gemini_analysis(stock_name, ticker, sector, price, roc_1m, roc_3m,
         fund_summary = f"P/E {pe:.1f}x, Dividend yield {div_yield:.1f}%, Earnings growth {earnings_growth:+.1f}%, Analyst: {analyst_rec}"
         news_str = "\n".join([f"- {n['title']} ({n['age']})" for n in news_headlines[:6]]) if news_headlines else "No recent news available"
 
-        prompt = f"""You are a neutral, institutional-grade market analyst writing for a cautious retail investor in Indonesia.
+        prompt = f"""You are a neutral, institutional-grade market analyst writing for a cautious retail investor based in Indonesia.
 Your job is to give a balanced, practical analysis. Be objective. No hype. No price targets. No guarantees.
 Write in simple, clear English with headings and bullet points.
 
-Target stock: {stock_name} ({ticker}) — {sector} sector, listed on Indonesia Stock Exchange (IDX)
+Target stock: {stock_name} ({ticker}) — {sector} sector
 
 LIVE MARKET DATA:
 - Technical: {tech_summary}
@@ -281,6 +281,15 @@ LIVE MARKET DATA:
 - Fundamentals: {fund_summary}
 - Fundamental score: {fund_score:.0f}/100
 - Macro context: {macro_context}
+
+IMPORTANT INSTRUCTIONS FOR MACRO ANALYSIS:
+- If this is a US stock (no suffix or .US): focus on US Fed policy, US earnings cycle, US sector trends, S&P500/Nasdaq momentum, USD strength. Only mention Indonesia in the context of currency risk for the investor.
+- If this is an Indonesian stock (.JK): focus on Bank Indonesia rate, Rupiah, IDX trend, commodity prices, domestic demand.
+- If this is a Japanese stock (.T): focus on BOJ policy, Yen direction, Japan macro, domestic sector trends.
+- If this is a Korean stock (.KS): focus on BOK policy, KRW, Samsung/chip cycle, export demand from China.
+- If this is a Chinese/HK stock (.HK, .SS): focus on PBOC policy, China growth, property sector, regulatory environment.
+- If this is crypto (-USD): focus on BTC dominance, macro risk appetite, on-chain signals, regulatory news.
+- Always end Section 1 with a note on what this means specifically for an Indonesian retail investor holding this asset (currency risk, accessibility, liquidity).
 
 RECENT NEWS:
 {news_str}
@@ -503,17 +512,18 @@ idr_now  = latest(idr_s)
 us_macro = fetch_us_macro_context()
 us_macro_str = ""
 if us_macro:
-    us_macro_str = (f"US Market: SPY {us_macro.get('spy_1m',0):+.1f}% 1M, "
+    us_macro_str = (f"SPY {us_macro.get('spy_1m',0):+.1f}% 1M, "
                    f"QQQ {us_macro.get('qqq_1m',0):+.1f}% 1M, "
                    f"VIX {us_macro.get('vix',20):.0f}, "
                    f"DXY {us_macro.get('dxy_1m',0):+.1f}% 1M, "
-                   f"Regime: {us_macro.get('regime','Unknown')}, "
+                   f"US Regime: {us_macro.get('regime','Unknown')}, "
                    f"SPY {'above' if us_macro.get('spy_above_200') else 'below'} 200DMA")
 
-macro_context = (f"Indonesia: IDX {idx_now:,.0f} ({idx_1m:+.1f}% 1M), "
-                f"USD/IDR {idr_now:,.0f} ({idr_1m:+.1f}% 1M), "
-                f"EM flows {em_1m:+.1f}% 1M. "
-                f"{us_macro_str}")
+indo_macro_str = (f"IDX {idx_now:,.0f} ({idx_1m:+.1f}% 1M), "
+                 f"USD/IDR {idr_now:,.0f} ({idr_1m:+.1f}% 1M), "
+                 f"EM flows {em_1m:+.1f}% 1M")
+
+macro_context = f"US macro: {us_macro_str} | Indonesia macro: {indo_macro_str}"
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AI DEEP ANALYSIS
