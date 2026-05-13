@@ -17,7 +17,7 @@ from datetime import datetime
 st.set_page_config(page_title="Indo AI Dashboard", page_icon="🇮🇩", layout="wide")
 
 # ── Gemini API Key ─────────────────────────────────────────────────────────────
-ANTHROPIC_API_KEY = "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"
+ANTHROPIC_API_KEY = st.secrets.get("ANTHROPIC_API_KEY", "")
 CLAUDE_URL = "https://api.anthropic.com/v1/messages"
 
 # ── Stock Universe ─────────────────────────────────────────────────────────────
