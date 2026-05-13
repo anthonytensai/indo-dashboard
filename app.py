@@ -12,13 +12,13 @@ import plotly.graph_objects as go
 import requests
 import feedparser
 from datetime import datetime
-import google.generativeai as genai
+
 
 st.set_page_config(page_title="Indo AI Dashboard", page_icon="🇮🇩", layout="wide")
 
 # ── Gemini API Key ─────────────────────────────────────────────────────────────
 GEMINI_API_KEY = "AIzaSyA8nd6eJ_QDNnTqW3bobUIN1sNbT03CtY0"
-genai.configure(api_key=GEMINI_API_KEY)
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
 # ── Stock Universe ─────────────────────────────────────────────────────────────
 STOCKS = {
@@ -249,8 +249,6 @@ def run_gemini_analysis(stock_name, ticker, sector, price, roc_1m, roc_3m,
                          tech_score, fund_score):
     """Call Gemini API with the full analyst prompt framework."""
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash-latest")
-
         # Build context summary
         tech_summary = f"Price Rp {price:,.0f}, 1M return {roc_1m:+.1f}%, 3M return {roc_3m:+.1f}%, RSI {rsi:.0f}, {'above' if above_200dma else 'below'} 200DMA"
         fund_summary = f"P/E {pe:.1f}x, Dividend yield {div_yield:.1f}%, Earnings growth {earnings_growth:+.1f}%, Analyst: {analyst_rec}"
@@ -339,8 +337,10 @@ Top 3 signals that conditions are improving or worsening.
 - One sentence: "If I were a cautious retail investor in Indonesia, I would focus on ____."
 """
 
-        response = model.generate_content(prompt)
-        return response.text
+        resp = requests.post(GEMINI_URL, params={"key": GEMINI_API_KEY}, json={"contents": [{"parts": [{"text": prompt}]}]}, timeout=60)
+        if resp.status_code == 200:
+            return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+        return f"Gemini error {resp.status_code}: {resp.text[:200]}"
 
     except Exception as e:
         return f"⚠️ Gemini API error: {str(e)}\n\nPlease check your API key or try again."
