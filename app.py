@@ -536,23 +536,195 @@ def parse_confidence(analysis_text):
         pass
     return scores, analysis_text
 
-def make_chart(close, name, score, height=320):
+def make_chart(close, name, score, height=320, turn_data=None):
     color = "#22c55e" if score >= 65 else "#f59e0b" if score >= 45 else "#ef4444"
     fig = go.Figure()
-    sp = close.tail(252)
-    fig.add_trace(go.Scatter(x=sp.index, y=sp.values, name=name,
-                              line=dict(color=color, width=2)))
+    sp = close.tail(120)  # last 120 days for clarity
+    
+    # Candlestick-style price line with fill
+    fig.add_trace(go.Scatter(
+        x=sp.index, y=sp.values, name=name,
+        line=dict(color=color, width=2),
+        fill="tozeroy", fillcolor=f"rgba({'34,197,94' if score>=65 else '245,158,11' if score>=45 else '239,68,68'},0.05)",
+    ))
+    
+    # Moving averages
     for w, c, label in [(20,"#94a3b8","20DMA"),(50,"#f59e0b","50DMA"),(200,"#ef4444","200DMA")]:
         if len(close) >= w:
-            ma = close.rolling(w).mean().tail(252)
+            ma = close.rolling(w).mean().tail(120)
             fig.add_trace(go.Scatter(x=ma.index, y=ma.values, name=label,
                                       line=dict(color=c, width=1, dash="dot")))
-    fig.update_layout(height=height, margin=dict(l=10,r=10,t=10,b=10),
-                      paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
-                      font=dict(color="#fafafa"), showlegend=True,
-                      legend=dict(orientation="h", y=1.08),
-                      xaxis=dict(gridcolor="#1f2937"),
-                      yaxis=dict(gridcolor="#1f2937"))
+    
+    # Turn price levels
+    if turn_data:
+        p_now = turn_data.get("current_price", 0)
+        t310  = turn_data.get("turn_3_10")
+        t16   = turn_data.get("turn_16")
+        s50   = turn_data.get("sma50")
+        x_range = [sp.index[0], sp.index[-1]]
+        
+        if t310:
+            above = p_now > t310
+            fig.add_shape(type="line", x0=x_range[0], x1=x_range[1],
+                         y0=t310, y1=t310,
+                         line=dict(color="#facc15", width=1.5, dash="dash"))
+            fig.add_annotation(x=x_range[-1], y=t310,
+                              text=f"  L1: {t310:,.2f}", showarrow=False,
+                              font=dict(color="#facc15", size=10), xanchor="left")
+        
+        if t16:
+            fig.add_shape(type="line", x0=x_range[0], x1=x_range[1],
+                         y0=t16, y1=t16,
+                         line=dict(color="#fb923c", width=1.5, dash="dash"))
+            fig.add_annotation(x=x_range[-1], y=t16,
+                              text=f"  L2: {t16:,.2f}", showarrow=False,
+                              font=dict(color="#fb923c", size=10), xanchor="left")
+        
+        # Shade zone between L1 and L2
+        if t310 and t16:
+            lo, hi = min(t310, t16), max(t310, t16)
+            fig.add_hrect(y0=lo, y1=hi,
+                         fillcolor="rgba(250,204,21,0.07)",
+                         line_width=0,
+                         annotation_text="transition zone",
+                         annotation_font=dict(size=9, color="#64748b"),
+                         annotation_position="top left")
+        
+        # Add current price marker
+        if p_now:
+            fig.add_hline(y=p_now, line_dash="dot", line_color=color, opacity=0.6,
+                         annotation_text=f"  Now: {p_now:,.2f}",
+                         annotation_font=dict(color=color, size=10))
+    
+    fig.update_layout(
+        height=height,
+        margin=dict(l=10, r=80, t=30, b=10),
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
+        font=dict(color="#fafafa"),
+        showlegend=True,
+        legend=dict(orientation="h", y=1.08, font=dict(size=10)),
+        xaxis=dict(gridcolor="#1f2937", showgrid=True),
+        yaxis=dict(gridcolor="#1f2937", showgrid=True),
+        hovermode="x unified",
+    )
+    return fig
+
+
+def make_turn_price_chart(close, name, turn_data, curr_sym="$", height=380):
+    """
+    Dedicated turn price chart showing:
+    - Price with 50 SMA
+    - Level 1 (3-10 turn price) as yellow dashed line
+    - Level 2 (16-smooth turn price) as orange dashed line  
+    - Shaded zones showing bullish/bearish alignment regions
+    - Momentum subplot (3-10 spread)
+    """
+    if close.empty or not turn_data:
+        return go.Figure()
+    
+    sp = close.tail(120)
+    
+    # Build SMAs and spread
+    fast_sma   = close.rolling(3).mean().tail(120)
+    slow_sma   = close.rolling(10).mean().tail(120)
+    spread     = (close.rolling(3).mean() - close.rolling(10).mean()).tail(120)
+    spread_sm  = (close.rolling(3).mean() - close.rolling(10).mean()).rolling(16).mean().tail(120)
+    sma50      = close.rolling(50).mean().tail(120)
+    
+    from plotly.subplots import make_subplots
+    fig = make_subplots(
+        rows=2, cols=1,
+        shared_xaxes=True,
+        row_heights=[0.70, 0.30],
+        vertical_spacing=0.04,
+        subplot_titles=(f"{name} — Turn Price Levels", "3-10 Momentum Spread"),
+    )
+    
+    p_now = turn_data.get("current_price", 0)
+    t310  = turn_data.get("turn_3_10", 0)
+    t16   = turn_data.get("turn_16", 0)
+    s50   = turn_data.get("sma50", 0)
+    above_50  = turn_data.get("above_50", False)
+    score_col = "#22c55e" if above_50 else "#ef4444"
+    
+    x = sp.index
+    
+    # ── Price ──
+    fig.add_trace(go.Scatter(x=x, y=sp.values, name=name,
+                              line=dict(color=score_col, width=2)), row=1, col=1)
+    
+    # 50 SMA
+    fig.add_trace(go.Scatter(x=x, y=sma50.values, name="50 SMA",
+                              line=dict(color="#3b82f6", width=1.5, dash="dot")), row=1, col=1)
+    
+    # Level 1 — 3-10 turn price
+    if t310:
+        col_l1 = "#facc15"
+        fig.add_hline(y=t310, line_dash="dash", line_color=col_l1, line_width=2,
+                     row=1, col=1)
+        fig.add_annotation(x=x[-1], y=t310, xref="x", yref="y",
+                          text=f" L1 {curr_sym}{t310:,.2f}",
+                          showarrow=False, font=dict(color=col_l1, size=11),
+                          xanchor="left", bgcolor="rgba(15,23,42,0.8)")
+    
+    # Level 2 — 16-smooth turn price
+    if t16:
+        col_l2 = "#fb923c"
+        fig.add_hline(y=t16, line_dash="dash", line_color=col_l2, line_width=2,
+                     row=1, col=1)
+        fig.add_annotation(x=x[-1], y=t16, xref="x", yref="y",
+                          text=f" L2 {curr_sym}{t16:,.2f}",
+                          showarrow=False, font=dict(color=col_l2, size=11),
+                          xanchor="left", bgcolor="rgba(15,23,42,0.8)")
+    
+    # Level 3 — 50 SMA label
+    if s50:
+        fig.add_annotation(x=x[-1], y=s50, xref="x", yref="y",
+                          text=f" L3 {curr_sym}{s50:,.2f}",
+                          showarrow=False, font=dict(color="#3b82f6", size=11),
+                          xanchor="left", bgcolor="rgba(15,23,42,0.8)")
+    
+    # Shade full bullish zone (above all 3 levels)
+    if t310 and t16 and s50:
+        full_bull_line = max(t310, t16, s50)
+        fig.add_hrect(y0=full_bull_line, y1=full_bull_line * 1.15,
+                     fillcolor="rgba(34,197,94,0.06)", line_width=0,
+                     row=1, col=1)
+        fig.add_hrect(y0=full_bull_line * 0.85, y1=full_bull_line,
+                     fillcolor="rgba(245,158,11,0.06)", line_width=0,
+                     row=1, col=1)
+    
+    # Current price line
+    if p_now:
+        fig.add_hline(y=p_now, line_dash="dot", line_color=score_col,
+                     line_width=1.5, opacity=0.8, row=1, col=1)
+    
+    # ── Momentum Spread subplot ──
+    spread_vals = spread.values
+    colors_spread = ["#22c55e" if v > 0 else "#ef4444" for v in spread_vals]
+    
+    fig.add_trace(go.Bar(x=x, y=spread_vals, name="3-10 Spread",
+                         marker_color=colors_spread, opacity=0.7), row=2, col=1)
+    
+    fig.add_trace(go.Scatter(x=x, y=spread_sm.values, name="16-Smooth",
+                              line=dict(color="#fb923c", width=1.5)), row=2, col=1)
+    
+    fig.add_hline(y=0, line_color="#64748b", line_width=1, row=2, col=1)
+    
+    fig.update_layout(
+        height=height,
+        margin=dict(l=10, r=100, t=40, b=10),
+        paper_bgcolor="#0e1117",
+        plot_bgcolor="#0e1117",
+        font=dict(color="#fafafa", size=10),
+        showlegend=True,
+        legend=dict(orientation="h", y=1.06, font=dict(size=10)),
+        hovermode="x unified",
+    )
+    fig.update_xaxes(gridcolor="#1f2937", showgrid=True)
+    fig.update_yaxes(gridcolor="#1f2937", showgrid=True)
+    
     return fig
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -733,9 +905,16 @@ if view == "🧠 AI Deep Analysis":
     with c4: st.metric("Tech Score", f"{tech_score:.0f}%")
     with c5: st.metric("Fund Score", f"{fund_score:.0f}%")
 
-    # Chart
+    # Chart — use turn price chart if data available, else standard
     if not close.empty:
-        st.plotly_chart(make_chart(close, selected, combined_score, 280), use_container_width=True)
+        curr_sym_chart, _ = get_currency(ticker)
+        if turn_data:
+            st.plotly_chart(
+                make_turn_price_chart(close, selected or ticker, turn_data, curr_sym_chart, height=400),
+                use_container_width=True
+            )
+        else:
+            st.plotly_chart(make_chart(close, selected or ticker, combined_score, 300), use_container_width=True)
 
     # Turn price panel
     if turn_data:
