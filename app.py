@@ -249,7 +249,7 @@ def run_gemini_analysis(stock_name, ticker, sector, price, roc_1m, roc_3m,
                          tech_score, fund_score):
     """Call Gemini API with the full analyst prompt framework."""
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+       model = genai.GenerativeModel("gemini-2.0-flash")
 
         # Build context summary
         tech_summary = f"Price Rp {price:,.0f}, 1M return {roc_1m:+.1f}%, 3M return {roc_3m:+.1f}%, RSI {rsi:.0f}, {'above' if above_200dma else 'below'} 200DMA"
