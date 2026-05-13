@@ -18,7 +18,7 @@ st.set_page_config(page_title="Indo AI Dashboard", page_icon="🇮🇩", layout=
 
 # ── Gemini API Key ─────────────────────────────────────────────────────────────
 GEMINI_API_KEY = "AIzaSyA8nd6eJ_QDNnTqW3bobUIN1sNbT03CtY0"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent"
 
 # ── Stock Universe ─────────────────────────────────────────────────────────────
 STOCKS = {
