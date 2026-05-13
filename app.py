@@ -456,15 +456,37 @@ if view == "🧠 AI Deep Analysis":
     st.title("🧠 AI Deep Stock Analysis")
     st.caption("Institutional-grade analysis powered by Google Gemini")
 
-    col1, col2 = st.columns([2, 1])
+    st.markdown("Enter any stock, crypto or ETF ticker:")
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
-        selected = st.selectbox("Select stock", list(STOCKS.keys()))
+        custom_ticker = st.text_input("Ticker symbol", placeholder="e.g. BBCA.JK, AAPL, BTC-USD, NVDA, GOTO.JK").upper().strip()
     with col2:
+        selected = st.selectbox("Or pick Indo stock", [""] + list(STOCKS.keys()))
+    with col3:
         run_btn = st.button("🚀 Run Full Analysis", type="primary", use_container_width=True)
 
-    stock_info = STOCKS[selected]
-    ticker = stock_info["ticker"]
-    sector = stock_info["sector"]
+    # Determine which ticker to use
+    if custom_ticker:
+        ticker = custom_ticker
+        # Auto-detect sector and name
+        if any(x in ticker for x in ["BTC", "ETH", "XRP", "SOL", "DOGE", "BNB"]):
+            sector = "Crypto"
+            selected = ticker
+        elif ticker.endswith(".JK"):
+            sector = "Indonesian Stock"
+            selected = ticker
+        else:
+            sector = "US Stock"
+            selected = ticker
+        stock_info = {"ticker": ticker, "sector": sector, "search": f"{ticker} stock news"}
+    elif selected and selected in STOCKS:
+        stock_info = STOCKS[selected]
+        ticker = stock_info["ticker"]
+        sector = stock_info["sector"]
+    else:
+        st.info("Enter a ticker symbol or select an Indo stock above, then click Run Full Analysis.")
+        st.markdown("**Examples:**  (Apple),  (Nvidia),  (Microsoft),  (Bitcoin),  (BCA),  (GOTO)")
+        st.stop()
 
     # Always show quick data
     with st.spinner("Loading market data..."):
