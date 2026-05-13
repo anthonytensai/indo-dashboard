@@ -358,7 +358,7 @@ def run_gemini_analysis(stock_name, ticker, sector, price, roc_1m, roc_3m,
         curr_sym_ai, _ = get_currency(ticker)
         tech_summary = f"Price {curr_sym_ai} {price:,.2f}, 1M return {roc_1m:+.1f}%, 3M return {roc_3m:+.1f}%, RSI {rsi:.0f}, {'above' if above_200dma else 'below'} 200DMA"
         fund_summary = f"P/E {pe:.1f}x, Dividend yield {div_yield:.1f}%, Earnings growth {earnings_growth:+.1f}%, Analyst: {analyst_rec}"
-        news_str = "\n".join([f"- {n['title']} ({n['age']})" for n in news_headlines[:6]]) if news_headlines else "No recent news available"
+        news_str = "\n".join([f"- {n['title']} ({n['age']})" for n in news_headlines[:10]]) if news_headlines else "No recent news found — base analysis only on the live price/technical data provided, do not use training memory for recent events"
         
         # Build turn price context if available
         turn_str = ""
@@ -375,12 +375,21 @@ MOMENTUM TURN PRICE ANALYSIS:
 """
 
         prompt = f"""You are a neutral, institutional-grade market analyst writing for a cautious retail investor based in Indonesia.
-Your job is to give a balanced, practical analysis. Be objective. No hype. No price targets. No guarantees.
+Your job is to give a balanced, practical analysis. Be objective. No hype. No guarantees.
 Write in simple, clear English with headings and bullet points.
+
+CRITICAL: Today is May 2026. Your training data may be outdated. You MUST:
+- Use ONLY the live market data and news provided below for your analysis
+- Do NOT reference events, earnings, or data from 2024 or earlier as if they are current
+- When discussing recent results, use ONLY what appears in the news headlines provided
+- If you are unsure about recent events, say "based on available data" rather than inventing specifics
+- Base all price levels and momentum analysis on the LIVE DATA provided, not your training memory
+- Acknowledge when news data is limited rather than filling gaps with outdated information
 
 Target stock: {stock_name} ({ticker}) — {sector} sector
 
-LIVE MARKET DATA:
+CURRENT DATE: May 2026
+LIVE MARKET DATA (as of today):
 - Technical: {tech_summary}
 - Technical score: {tech_score:.0f}/100
 - Fundamentals: {fund_summary}
@@ -879,7 +888,10 @@ if view == "🧠 AI Deep Analysis":
         close    = get_close(price_df)
         volume   = get_volume(price_df)
         fund     = fetch_fundamentals(ticker)
-        news     = fetch_news(stock_info["search"])
+        # Fetch both general news and recent earnings news
+        news_general  = fetch_news(stock_info["search"], max_items=6)
+        news_earnings = fetch_news(f"{ticker} earnings results 2025 2026", max_items=4)
+        news = news_general + [n for n in news_earnings if n not in news_general]
 
     p     = latest(close)
     r1d   = roc(close, 1)
