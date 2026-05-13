@@ -498,6 +498,31 @@ def fetch_us_macro_context():
     except:
         return {}
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def search_ticker(query):
+    """Search for ticker by company name using Yahoo Finance search API."""
+    try:
+        url = f"https://query2.finance.yahoo.com/v1/finance/search"
+        params = {"q": query, "quotesCount": 8, "newsCount": 0, "enableFuzzyQuery": True}
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(url, params=params, headers=headers, timeout=10)
+        if r.status_code == 200:
+            results = r.json().get("quotes", [])
+            return [
+                {
+                    "symbol": q.get("symbol", ""),
+                    "name":   q.get("longname") or q.get("shortname", ""),
+                    "type":   q.get("quoteType", ""),
+                    "exchange": q.get("exchange", ""),
+                }
+                for q in results
+                if q.get("symbol") and q.get("quoteType") in ["EQUITY", "CRYPTOCURRENCY", "ETF", "INDEX"]
+            ]
+    except:
+        pass
+    return []
+
 # ── Fetch shared macro data ───────────────────────────────────────────────────
 idx_s  = fetch_series("^JKSE", "6mo")
 idr_s  = fetch_series("IDR=X", "6mo")
