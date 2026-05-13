@@ -374,31 +374,29 @@ Top 3 signals that conditions are improving or worsening.
 
 
 def parse_confidence(analysis_text):
-    """Extract confidence scores from AI response."""
     import re
     scores = {"buy": 33, "hold": 34, "sell": 33, "overall": "HOLD", "one_line": ""}
     try:
         if "CONFIDENCE_SCORES:" in analysis_text:
             block = analysis_text.split("CONFIDENCE_SCORES:")[1].split("END_SCORES")[0]
-            for line in block.strip().split("
-"):
+            for line in block.strip().splitlines():
                 line = line.strip()
-                if line.startswith("BUY:"):
-                    scores["buy"] = int(re.search(r"\d+", line).group())
-                elif line.startswith("HOLD:"):
-                    scores["hold"] = int(re.search(r"\d+", line).group())
-                elif line.startswith("SELL:"):
-                    scores["sell"] = int(re.search(r"\d+", line).group())
+                m = re.search(r"\d+", line)
+                if line.startswith("BUY:") and m:
+                    scores["buy"] = int(m.group())
+                elif line.startswith("HOLD:") and m:
+                    scores["hold"] = int(m.group())
+                elif line.startswith("SELL:") and m:
+                    scores["sell"] = int(m.group())
                 elif line.startswith("OVERALL:"):
-                    scores["overall"] = line.split(":")[1].strip()
+                    scores["overall"] = line.split(":", 1)[1].strip()
                 elif line.startswith("ONE_LINE:"):
                     scores["one_line"] = line.split(":", 1)[1].strip()
-            # Remove the scores block from display text
             clean = analysis_text.split("CONFIDENCE_SCORES:")[0]
             if "END_SCORES" in analysis_text:
                 clean += analysis_text.split("END_SCORES")[1]
             return scores, clean.strip()
-    except:
+    except Exception:
         pass
     return scores, analysis_text
 
