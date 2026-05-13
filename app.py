@@ -172,6 +172,97 @@ def compute_rsi(s, period=14):
     rs = gain / loss
     return float((100 - (100 / (1 + rs))).iloc[-1])
 
+
+def compute_turn_prices(close: pd.Series, fast=3, slow=10, smooth=16, trend=50):
+    """
+    Calculate the closing price required for momentum to turn bullish or bearish.
+    Based on SMA 3-10 spread and 16-smoothed spread turn price math.
+    Returns dict with turn prices and current alignment.
+    """
+    if len(close) < max(slow, smooth, trend) + 5:
+        return {}
+    
+    try:
+        # Current SMAs
+        fast_sma  = close.rolling(fast).mean()
+        slow_sma  = close.rolling(slow).mean()
+        spread    = fast_sma - slow_sma
+        spread_sm = spread.rolling(smooth).mean()
+        trend_sma = close.rolling(trend).mean()
+        
+        p = latest(close)
+        
+        # Turn price for 3-10 spread to flip
+        # Formula: (10 * close[3] - 3 * close[10]) / 7
+        c_fast = float(close.iloc[-fast])   # close 3 bars ago
+        c_slow = float(close.iloc[-slow])   # close 10 bars ago
+        turn_3_10 = (slow * c_fast - fast * c_slow) / (slow - fast)
+        
+        # Turn price for 16-smoothed spread to flip
+        # Formula: (30/7) * (spread[16] - old_spread + close[3]/3 - close[10]/10)
+        old_spread   = float(spread.iloc[-2])
+        spread_16ago = float(spread.iloc[-smooth]) if len(spread) >= smooth else float(spread.iloc[0])
+        coeff = 1/fast - 1/slow  # = 7/30
+        turn_16 = (spread_16ago - old_spread + c_fast/fast - c_slow/slow) / coeff
+        
+        # Current 50 SMA
+        sma50_now = float(trend_sma.iloc[-1])
+        sma50_prev = float(trend_sma.iloc[-2])
+        sma50_rising = sma50_now > sma50_prev
+        
+        # Current spread direction
+        spread_now  = float(spread.iloc[-1])
+        spread_prev = float(spread.iloc[-2])
+        spread_rising = spread_now > spread_prev
+        
+        spread_sm_now  = float(spread_sm.iloc[-1])
+        spread_sm_prev = float(spread_sm.iloc[-2])
+        spread_sm_rising = spread_sm_now > spread_sm_prev
+        
+        # Alignment status
+        above_50    = p > sma50_now
+        above_3_10  = p > turn_3_10
+        above_16    = p > turn_16
+        
+        if above_50 and sma50_rising and spread_rising and spread_sm_rising:
+            alignment = "🟢 FULL BULLISH — all signals aligned"
+            alignment_score = 100
+        elif above_50 and spread_rising and spread_sm_rising:
+            alignment = "🟢 Bullish — above 50SMA, momentum confirmed"
+            alignment_score = 80
+        elif above_50 and spread_rising:
+            alignment = "🟡 Early bullish — momentum improving, not confirmed"
+            alignment_score = 60
+        elif above_50 and not spread_rising:
+            alignment = "🟡 Caution — above 50SMA but momentum fading"
+            alignment_score = 45
+        elif not above_50 and not spread_rising and not spread_sm_rising:
+            alignment = "🔴 FULL BEARISH — all signals aligned down"
+            alignment_score = 0
+        elif not above_50 and not spread_sm_rising:
+            alignment = "🔴 Bearish — below 50SMA, momentum declining"
+            alignment_score = 20
+        else:
+            alignment = "🟡 Mixed — conflicting signals"
+            alignment_score = 35
+        
+        return {
+            "turn_3_10":       round(turn_3_10, 2),
+            "turn_16":         round(turn_16, 2),
+            "sma50":           round(sma50_now, 2),
+            "sma50_rising":    sma50_rising,
+            "above_50":        above_50,
+            "above_3_10":      above_3_10,
+            "above_16":        above_16,
+            "spread_rising":   spread_rising,
+            "spread_sm_rising":spread_sm_rising,
+            "alignment":       alignment,
+            "alignment_score": alignment_score,
+            "current_price":   round(p, 2),
+        }
+    except Exception as e:
+        return {}
+
 def signal_color(score):
     if np.isnan(score): return "—", "—", "#6b7280"
     if score >= 65: return "🟢", "BUY", "#22c55e"
@@ -260,7 +351,7 @@ def score_fundamentals(fund, sector):
 def run_gemini_analysis(stock_name, ticker, sector, price, roc_1m, roc_3m,
                          rsi, above_200dma, pe, div_yield, earnings_growth,
                          analyst_rec, news_headlines, macro_context,
-                         tech_score, fund_score):
+                         tech_score, fund_score, turn_prices=None):
     """Call Gemini API with the full analyst prompt framework."""
     try:
         # Build context summary
@@ -268,6 +359,20 @@ def run_gemini_analysis(stock_name, ticker, sector, price, roc_1m, roc_3m,
         tech_summary = f"Price {curr_sym_ai} {price:,.2f}, 1M return {roc_1m:+.1f}%, 3M return {roc_3m:+.1f}%, RSI {rsi:.0f}, {'above' if above_200dma else 'below'} 200DMA"
         fund_summary = f"P/E {pe:.1f}x, Dividend yield {div_yield:.1f}%, Earnings growth {earnings_growth:+.1f}%, Analyst: {analyst_rec}"
         news_str = "\n".join([f"- {n['title']} ({n['age']})" for n in news_headlines[:6]]) if news_headlines else "No recent news available"
+        
+        # Build turn price context if available
+        turn_str = ""
+        if turn_prices:
+            tp = turn_prices
+            turn_str = f"""
+MOMENTUM TURN PRICE ANALYSIS:
+- Current price: {tp.get('current_price', 'N/A')}
+- 3-10 SMA spread turn price: {tp.get('turn_3_10', 'N/A')} ({'price is ABOVE → short momentum bullish' if tp.get('above_3_10') else 'price is BELOW → short momentum bearish'})
+- 16-smoothed spread turn price: {tp.get('turn_16', 'N/A')} ({'price is ABOVE → momentum confirmed bullish' if tp.get('above_16') else 'price is BELOW → momentum not yet confirmed'})
+- 50 SMA: {tp.get('sma50', 'N/A')} ({'price ABOVE 50SMA' if tp.get('above_50') else 'price BELOW 50SMA'}, 50SMA is {'rising' if tp.get('sma50_rising') else 'falling'})
+- Current alignment: {tp.get('alignment', 'N/A')}
+- Full bullish alignment requires close above: {max(tp.get('turn_3_10',0), tp.get('turn_16',0), tp.get('sma50',0)):.2f}
+"""
 
         prompt = f"""You are a neutral, institutional-grade market analyst writing for a cautious retail investor based in Indonesia.
 Your job is to give a balanced, practical analysis. Be objective. No hype. No price targets. No guarantees.
@@ -282,6 +387,12 @@ LIVE MARKET DATA:
 - Fundamental score: {fund_score:.0f}/100
 - Macro context: {macro_context}
 
+Please include a section "0. Momentum Turn Price Analysis" right after the confidence scores block and before Section 1, explaining in plain language:
+- What the turn prices mean for this specific stock right now
+- Whether the stock needs to go up or down to flip momentum
+- The single most important price level to watch
+- How this affects the near-term setup
+
 IMPORTANT INSTRUCTIONS FOR MACRO ANALYSIS:
 - If this is a US stock (no suffix or .US): focus on US Fed policy, US earnings cycle, US sector trends, S&P500/Nasdaq momentum, USD strength. Only mention Indonesia in the context of currency risk for the investor.
 - If this is an Indonesian stock (.JK): focus on Bank Indonesia rate, Rupiah, IDX trend, commodity prices, domestic demand.
@@ -293,6 +404,7 @@ IMPORTANT INSTRUCTIONS FOR MACRO ANALYSIS:
 
 RECENT NEWS:
 {news_str}
+{turn_str}
 
 IMPORTANT: Start your response with exactly this format (fill in the numbers):
 
@@ -608,6 +720,7 @@ if view == "🧠 AI Deep Analysis":
     fund_score, fund_details = score_fundamentals(fund, sector)
     combined_score = tech_score * 0.4 + fund_score * 0.6
     em, sl, color = signal_color(combined_score)
+    turn_data = compute_turn_prices(close)
 
     # Quick summary header
     st.markdown("---")
@@ -624,6 +737,81 @@ if view == "🧠 AI Deep Analysis":
     if not close.empty:
         st.plotly_chart(make_chart(close, selected, combined_score, 280), use_container_width=True)
 
+    # Turn price panel
+    if turn_data:
+        st.markdown("### 🎯 Momentum Turn Prices")
+        st.caption("The exact closing price needed for each momentum signal to flip direction")
+        
+        curr_sym_tp, _ = get_currency(ticker)
+        p_now = turn_data["current_price"]
+        t310  = turn_data["turn_3_10"]
+        t16   = turn_data["turn_16"]
+        s50   = turn_data["sma50"]
+        
+        tc1, tc2, tc3, tc4 = st.columns(4)
+        with tc1:
+            delta_310 = ((p_now / t310) - 1) * 100 if t310 else 0
+            st.metric(
+                "3-10 Turn Price",
+                f"{curr_sym_tp}{t310:,.2f}",
+                delta=f"{delta_310:+.1f}% {'above ✅' if p_now > t310 else 'below ⚠️'}",
+                delta_color="normal" if p_now > t310 else "inverse"
+            )
+        with tc2:
+            delta_16 = ((p_now / t16) - 1) * 100 if t16 else 0
+            st.metric(
+                "16-Smooth Turn Price",
+                f"{curr_sym_tp}{t16:,.2f}",
+                delta=f"{delta_16:+.1f}% {'above ✅' if p_now > t16 else 'below ⚠️'}",
+                delta_color="normal" if p_now > t16 else "inverse"
+            )
+        with tc3:
+            delta_50 = ((p_now / s50) - 1) * 100 if s50 else 0
+            st.metric(
+                "50 SMA",
+                f"{curr_sym_tp}{s50:,.2f}",
+                delta=f"{delta_50:+.1f}% {'above ✅' if turn_data['above_50'] else 'below ⚠️'} {'↑' if turn_data['sma50_rising'] else '↓'}",
+                delta_color="normal" if turn_data["above_50"] else "inverse"
+            )
+        with tc4:
+            st.metric("Alignment", turn_data["alignment_score"])
+        
+        # Alignment status
+        align = turn_data["alignment"]
+        if "FULL BULLISH" in align:
+            st.success(align)
+        elif "Bullish" in align:
+            st.success(align)
+        elif "FULL BEARISH" in align or "Bearish" in align:
+            st.error(align)
+        else:
+            st.warning(align)
+        
+        # What you need
+        st.markdown("**What needs to happen:**")
+        if not turn_data["above_3_10"]:
+            st.caption(f"· Close above {curr_sym_tp}{t310:,.2f} → short momentum turns up")
+        else:
+            st.caption(f"· ✅ Already above 3-10 turn price — short momentum is positive")
+        if not turn_data["above_16"]:
+            st.caption(f"· Close above {curr_sym_tp}{t16:,.2f} → smoothed momentum confirms")
+        else:
+            st.caption(f"· ✅ Already above 16-smooth turn price — momentum confirmed")
+        if not turn_data["above_50"]:
+            st.caption(f"· Close above {curr_sym_tp}{s50:,.2f} → above 50 SMA (trend alignment)")
+        else:
+            st.caption(f"· ✅ Already above 50 SMA {'(rising ↑)' if turn_data['sma50_rising'] else '(flat/falling ↓)'}")
+        
+        full_bull = t310 and t16 and s50
+        if full_bull:
+            required = max(t310, t16, s50)
+            if p_now < required:
+                st.info(f"🎯 **Full bullish alignment requires close above {curr_sym_tp}{required:,.2f}**")
+            else:
+                st.success(f"🎯 **Full bullish alignment already achieved above {curr_sym_tp}{required:,.2f}**")
+    
+    st.markdown("---")
+    
     # Quick scores
     col1, col2 = st.columns(2)
     with col1:
@@ -671,6 +859,7 @@ if view == "🧠 AI Deep Analysis":
                 macro_context=macro_context,
                 tech_score=tech_score,
                 fund_score=fund_score,
+                turn_prices=turn_data,
             )
 
         # Parse confidence scores
