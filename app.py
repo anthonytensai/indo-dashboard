@@ -124,6 +124,20 @@ def fetch_news(query, max_items=8):
     except:
         return []
 
+
+def get_currency(ticker):
+    """Return currency symbol based on ticker suffix."""
+    t = ticker.upper()
+    if t.endswith(".JK"): return "Rp", "IDR"
+    if t.endswith(".T"): return "¥", "JPY"
+    if t.endswith(".HK"): return "HK$", "HKD"
+    if t.endswith(".KS") or t.endswith(".KQ"): return "₩", "KRW"
+    if t.endswith(".SS") or t.endswith(".SZ"): return "¥", "CNY"
+    if t.endswith(".AX"): return "A$", "AUD"
+    if t.endswith(".L"): return "£", "GBP"
+    if "BTC" in t or "ETH" in t or "XRP" in t or "SOL" in t or "-USD" in t: return "$", "USD"
+    return "$", "USD"  # default US stocks
+
 def get_close(df):
     if df.empty: return pd.Series(dtype=float)
     if isinstance(df.columns, pd.MultiIndex):
@@ -250,7 +264,8 @@ def run_gemini_analysis(stock_name, ticker, sector, price, roc_1m, roc_3m,
     """Call Gemini API with the full analyst prompt framework."""
     try:
         # Build context summary
-        tech_summary = f"Price Rp {price:,.0f}, 1M return {roc_1m:+.1f}%, 3M return {roc_3m:+.1f}%, RSI {rsi:.0f}, {'above' if above_200dma else 'below'} 200DMA"
+        curr_sym_ai, _ = get_currency(ticker)
+        tech_summary = f"Price {curr_sym_ai} {price:,.2f}, 1M return {roc_1m:+.1f}%, 3M return {roc_3m:+.1f}%, RSI {rsi:.0f}, {'above' if above_200dma else 'below'} 200DMA"
         fund_summary = f"P/E {pe:.1f}x, Dividend yield {div_yield:.1f}%, Earnings growth {earnings_growth:+.1f}%, Analyst: {analyst_rec}"
         news_str = "\n".join([f"- {n['title']} ({n['age']})" for n in news_headlines[:6]]) if news_headlines else "No recent news available"
 
@@ -436,6 +451,44 @@ with st.sidebar:
     st.caption("Powered by Google Gemini (free)")
     st.caption("⚠️ Not financial advice.")
 
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_us_macro_context():
+    """Fetch key US macro signals to enrich AI analysis context."""
+    try:
+        spy   = fetch_series("SPY", "6mo")
+        qqq   = fetch_series("QQQ", "6mo")
+        vix   = fetch_series("^VIX", "1mo")
+        dxy   = fetch_series("UUP",  "6mo")
+        
+        spy_1m  = roc(spy, 21)
+        qqq_1m  = roc(qqq, 21)
+        vix_now = latest(vix)
+        dxy_1m  = roc(dxy, 21)
+        spy_above_200 = latest(spy) > dma(spy, 200) if len(spy) >= 200 else None
+        
+        # Simple regime classification
+        if not np.isnan(spy_1m) and not np.isnan(vix_now):
+            if spy_1m > 3 and vix_now < 20:
+                regime = "Risk-On"
+            elif spy_1m < -5 or vix_now > 25:
+                regime = "Risk-Off"
+            else:
+                regime = "Neutral/Transitioning"
+        else:
+            regime = "Unknown"
+        
+        return {
+            "spy_1m":       round(spy_1m, 1) if not np.isnan(spy_1m) else None,
+            "qqq_1m":       round(qqq_1m, 1) if not np.isnan(qqq_1m) else None,
+            "vix":          round(vix_now, 1) if not np.isnan(vix_now) else None,
+            "dxy_1m":       round(dxy_1m, 1) if not np.isnan(dxy_1m) else None,
+            "spy_above_200":spy_above_200,
+            "regime":       regime,
+        }
+    except:
+        return {}
+
 # ── Fetch shared macro data ───────────────────────────────────────────────────
 idx_s  = fetch_series("^JKSE", "6mo")
 idr_s  = fetch_series("IDR=X", "6mo")
@@ -447,7 +500,20 @@ em_1m    = roc(em_s,  21)
 idx_now  = latest(idx_s)
 idr_now  = latest(idr_s)
 
-macro_context = f"IDX {idx_now:,.0f} ({idx_1m:+.1f}% 1M), USD/IDR {idr_now:,.0f} ({idr_1m:+.1f}% 1M), EM flows {em_1m:+.1f}% 1M"
+us_macro = fetch_us_macro_context()
+us_macro_str = ""
+if us_macro:
+    us_macro_str = (f"US Market: SPY {us_macro.get('spy_1m',0):+.1f}% 1M, "
+                   f"QQQ {us_macro.get('qqq_1m',0):+.1f}% 1M, "
+                   f"VIX {us_macro.get('vix',20):.0f}, "
+                   f"DXY {us_macro.get('dxy_1m',0):+.1f}% 1M, "
+                   f"Regime: {us_macro.get('regime','Unknown')}, "
+                   f"SPY {'above' if us_macro.get('spy_above_200') else 'below'} 200DMA")
+
+macro_context = (f"Indonesia: IDX {idx_now:,.0f} ({idx_1m:+.1f}% 1M), "
+                f"USD/IDR {idr_now:,.0f} ({idr_1m:+.1f}% 1M), "
+                f"EM flows {em_1m:+.1f}% 1M. "
+                f"{us_macro_str}")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # AI DEEP ANALYSIS
@@ -511,7 +577,8 @@ if view == "🧠 AI Deep Analysis":
     # Quick summary header
     st.markdown("---")
     c1, c2, c3, c4, c5 = st.columns(5)
-    with c1: st.metric("Price", f"Rp {p:,.0f}" if not np.isnan(p) else "—",
+    with c1: curr_sym, curr_code = get_currency(ticker)
+    st.metric("Price", f"{curr_sym} {p:,.2f}" if not np.isnan(p) else "—",
                         delta=f"{r1d:+.2f}%" if not np.isnan(r1d) else None)
     with c2: st.metric("1 Month", f"{r1m:+.1f}%" if not np.isnan(r1m) else "—")
     with c3: st.metric("RSI", f"{rsi:.0f}" if not np.isnan(rsi) else "—")
