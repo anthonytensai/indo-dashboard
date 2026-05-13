@@ -1,6 +1,6 @@
 """
-Indonesian Stock + Crypto Dashboard
-Top 45 IHSG stocks + BTC, ETH, XRP
+Indonesian Market Dashboard — Enhanced
+Top 45 IHSG stocks + Crypto + Commodities + Macro signals
 Run with: python -m streamlit run app.py
 """
 
@@ -11,11 +11,7 @@ import numpy as np
 import plotly.graph_objects as go
 from datetime import datetime
 
-st.set_page_config(
-    page_title="Indo Market Dashboard",
-    page_icon="🇮🇩",
-    layout="wide",
-)
+st.set_page_config(page_title="Indo Market Dashboard", page_icon="🇮🇩", layout="wide")
 
 # ── Tickers ───────────────────────────────────────────────────────────────────
 
@@ -73,8 +69,25 @@ CRYPTO = {
     "XRP (Ripple)":   "XRP-USD",
 }
 
-IDX_TICKER    = "^JKSE"
-USDIDR_TICKER = "IDR=X"
+# Commodities that drive Indonesian stocks
+COMMODITIES = {
+    "Coal (Newcastle)": "MTF=F",      # Coal futures proxy
+    "Palm Oil (CPO)":   "SOYB",       # Soybean ETF as soft commodity proxy
+    "Nickel":           "JJN",        # iPath Nickel ETN
+    "Copper":           "CPER",       # Copper ETF
+    "Crude Oil":        "CL=F",       # WTI Crude Oil
+    "Gold":             "GC=F",       # Gold futures
+}
+
+# Macro indicators
+MACRO = {
+    "USD/IDR":          "IDR=X",      # Rupiah
+    "US Dollar Index":  "DX-Y.NYB",  # DXY
+    "China ETF (FXI)":  "FXI",        # China large cap — Indo exports proxy
+    "EM ETF (EEM)":     "EEM",        # Emerging markets
+    "US 10Y Yield":     "^TNX",       # US rates affect EM flows
+    "IDX Composite":    "^JKSE",      # Jakarta index
+}
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -95,27 +108,23 @@ def fetch(ticker: str, period: str = "6mo") -> pd.Series:
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_all():
     out = {}
-    all_tickers = {**TOP45_IHSG, **CRYPTO}
-    for name, ticker in all_tickers.items():
+    for name, ticker in {**TOP45_IHSG, **CRYPTO, **COMMODITIES, **MACRO}.items():
         out[name] = fetch(ticker)
     return out
 
 def dma(s, w):
-    if len(s) < w:
-        return float("nan")
+    if len(s) < w: return float("nan")
     return float(s.rolling(w).mean().iloc[-1])
 
 def roc(s, d):
-    if len(s) < d + 1:
-        return float("nan")
-    return float((s.iloc[-1] / s.iloc[-d - 1] - 1) * 100)
+    if len(s) < d + 1: return float("nan")
+    return float((s.iloc[-1] / s.iloc[-d-1] - 1) * 100)
 
 def latest(s):
     return float(s.iloc[-1]) if not s.empty else float("nan")
 
 def stock_score(s):
-    if s.empty or len(s) < 10:
-        return float("nan")
+    if s.empty or len(s) < 10: return float("nan")
     score = 50.0
     p = latest(s)
     if not np.isnan(dma(s, 50)): score += 15 if p > dma(s, 50) else -15
@@ -132,20 +141,24 @@ def signal_label(score):
     if score >= 45: return "🟡", "HOLD"
     return "🔴", "WAIT"
 
-def make_chart(series, name, color="#3b82f6", show_50=True, show_200=False, height=280):
+def make_chart(series, name, color="#3b82f6", show_20=False, show_50=True, show_200=False, height=280):
     fig = go.Figure()
     sp = series.tail(180)
     fig.add_trace(go.Scatter(x=sp.index, y=sp.values, name=name,
-                              line=dict(color=color, width=2), showlegend=True))
+                              line=dict(color=color, width=2)))
+    if show_20 and len(series) >= 20:
+        ma = series.rolling(20).mean().tail(180)
+        fig.add_trace(go.Scatter(x=ma.index, y=ma.values, name="20DMA",
+                                  line=dict(color="#22c55e", width=1, dash="dot")))
     if show_50 and len(series) >= 50:
-        ma50 = series.rolling(50).mean().tail(180)
-        fig.add_trace(go.Scatter(x=ma50.index, y=ma50.values, name="50DMA",
-                                  line=dict(color="#f59e0b", width=1, dash="dot"), showlegend=True))
+        ma = series.rolling(50).mean().tail(180)
+        fig.add_trace(go.Scatter(x=ma.index, y=ma.values, name="50DMA",
+                                  line=dict(color="#f59e0b", width=1, dash="dot")))
     if show_200 and len(series) >= 200:
-        ma200 = series.rolling(200).mean().tail(180)
-        fig.add_trace(go.Scatter(x=ma200.index, y=ma200.values, name="200DMA",
-                                  line=dict(color="#ef4444", width=1, dash="dot"), showlegend=True))
-    fig.update_layout(height=height, margin=dict(l=10, r=10, t=10, b=10),
+        ma = series.rolling(200).mean().tail(180)
+        fig.add_trace(go.Scatter(x=ma.index, y=ma.values, name="200DMA",
+                                  line=dict(color="#ef4444", width=1, dash="dot")))
+    fig.update_layout(height=height, margin=dict(l=10,r=10,t=10,b=10),
                       paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
                       font=dict(color="#fafafa"), showlegend=True,
                       legend=dict(orientation="h", y=1.1),
@@ -153,7 +166,7 @@ def make_chart(series, name, color="#3b82f6", show_50=True, show_200=False, heig
                       yaxis=dict(gridcolor="#1f2937"))
     return fig
 
-# ── Fetch data ────────────────────────────────────────────────────────────────
+# ── Fetch all data ────────────────────────────────────────────────────────────
 
 with st.sidebar:
     st.title("🇮🇩 Indo Dashboard")
@@ -161,80 +174,142 @@ with st.sidebar:
         st.cache_data.clear()
         st.rerun()
     st.markdown("---")
-    view = st.radio("View", ["📊 Overview", "🏦 All Stocks", "₿ Crypto", "📈 All Charts"])
+    view = st.radio("View", [
+        "📊 Overview",
+        "🏦 Stocks",
+        "🛢️ Commodities",
+        "🌏 Macro",
+        "₿ Crypto",
+        "📈 All Charts",
+    ])
     st.markdown("---")
     st.caption(f"Updated: {datetime.now().strftime('%H:%M')}")
     st.caption("⚠️ Not financial advice.")
     with st.expander("ℹ️ How signals work"):
         st.markdown("""
 **Score 0–100:**
-- 🟢 65+ = Good time to consider buying
-- 🟡 45–64 = Hold, wait for clarity
-- 🔴 0–44 = Risky, avoid adding
+- 🟢 65+ = Conditions favorable
+- 🟡 45–64 = Mixed, wait
+- 🔴 0–44 = Unfavorable, be careful
 
-**Looks at:**
-- Price vs 20 & 50 day averages
-- 1 week & 1 month performance
-
-**Remember:** This is a guide, not a guarantee. Always do your own research.
+**Why commodities matter:**
+- Coal prices → BYAN, ADRO, PTBA, HRUM
+- Nickel/Copper → INCO, ANTM, MDKA
+- Palm oil → many consumer stocks
+- Rupiah strength → all stocks
+- China growth → Indonesian exports
         """)
 
-with st.spinner("Loading data for 45 stocks + crypto..."):
-    idx_data  = fetch(IDX_TICKER)
-    idr_data  = fetch(USDIDR_TICKER)
-    all_data  = fetch_all()
+with st.spinner("Loading data..."):
+    all_data = fetch_all()
 
-ihsg_data   = {k: all_data[k] for k in TOP45_IHSG}
-crypto_data = {k: all_data[k] for k in CRYPTO}
+ihsg_data  = {k: all_data[k] for k in TOP45_IHSG}
+crypto_data= {k: all_data[k] for k in CRYPTO}
+comm_data  = {k: all_data[k] for k in COMMODITIES}
+macro_data = {k: all_data[k] for k in MACRO}
 
-# ── Market signal ─────────────────────────────────────────────────────────────
-def market_signal():
+idx_data = macro_data["IDX Composite"]
+idr_data = macro_data["USD/IDR"]
+
+# ── Master signal ─────────────────────────────────────────────────────────────
+def master_signal():
     score = 50.0
     notes = []
+    max_points = 0
+    earned = 0
+
+    # 1. IDX trend (weight: 25)
     idx_now = latest(idx_data)
     idx_50  = dma(idx_data, 50)
     idx_1m  = roc(idx_data, 21)
+    max_points += 25
     if not np.isnan(idx_now) and not np.isnan(idx_50):
         if idx_now > idx_50:
-            score += 15
-            notes.append("✅ Jakarta market trending UP (IDX above 50-day average)")
+            earned += 25
+            notes.append("✅ Jakarta market (IDX) above 50-day average — uptrend")
         else:
-            score -= 15
-            notes.append("⚠️ Jakarta market trending DOWN (IDX below 50-day average)")
+            earned += 0
+            notes.append("⚠️ Jakarta market (IDX) below 50-day average — downtrend")
     if not np.isnan(idx_1m):
+        max_points += 10
         if idx_1m > 2:
-            score += 10
+            earned += 10
             notes.append(f"✅ IDX up {idx_1m:.1f}% this month — positive momentum")
         elif idx_1m < -2:
-            score -= 10
+            earned += 0
             notes.append(f"⚠️ IDX down {idx_1m:.1f}% this month — losing momentum")
         else:
-            notes.append(f"➡️ IDX roughly flat this month ({idx_1m:+.1f}%)")
+            earned += 5
+            notes.append(f"➡️ IDX roughly flat ({idx_1m:+.1f}% this month)")
+
+    # 2. Rupiah (weight: 20)
     idr_1m = roc(idr_data, 21)
+    max_points += 20
     if not np.isnan(idr_1m):
-        if idr_1m > 1.5:
-            score -= 15
-            notes.append(f"⚠️ Rupiah weakening {idr_1m:+.1f}% vs USD — foreign investors may sell")
-        elif idr_1m < -1.5:
-            score += 15
-            notes.append(f"✅ Rupiah strengthening {idr_1m:+.1f}% vs USD — positive for stocks")
+        if idr_1m < -1.5:
+            earned += 20
+            notes.append(f"✅ Rupiah strengthening {abs(idr_1m):.1f}% vs USD — foreign money coming in")
+        elif idr_1m > 1.5:
+            earned += 0
+            notes.append(f"⚠️ Rupiah weakening {idr_1m:.1f}% vs USD — foreign investors may sell")
         else:
+            earned += 10
             notes.append(f"➡️ Rupiah stable vs USD ({idr_1m:+.1f}%)")
+
+    # 3. China ETF — proxy for export demand (weight: 10)
+    china = macro_data.get("China ETF (FXI)", pd.Series(dtype=float))
+    china_1m = roc(china, 21)
+    max_points += 10
+    if not np.isnan(china_1m):
+        if china_1m > 2:
+            earned += 10
+            notes.append(f"✅ China markets up {china_1m:.1f}% — good for Indo exports")
+        elif china_1m < -2:
+            earned += 0
+            notes.append(f"⚠️ China markets down {china_1m:.1f}% — weak demand for Indo commodities")
+        else:
+            earned += 5
+            notes.append(f"➡️ China markets flat ({china_1m:+.1f}%)")
+
+    # 4. Commodities — coal + nickel + copper (weight: 20)
+    coal_1m   = roc(comm_data.get("Coal (Newcastle)", pd.Series(dtype=float)), 21)
+    nickel_1m = roc(comm_data.get("Nickel", pd.Series(dtype=float)), 21)
+    copper_1m = roc(comm_data.get("Copper", pd.Series(dtype=float)), 21)
+    oil_1m    = roc(comm_data.get("Crude Oil", pd.Series(dtype=float)), 21)
+    comm_scores = [x for x in [coal_1m, nickel_1m, copper_1m, oil_1m] if not np.isnan(x)]
+    max_points += 20
+    if comm_scores:
+        avg_comm = np.mean(comm_scores)
+        if avg_comm > 2:
+            earned += 20
+            notes.append(f"✅ Commodities up avg {avg_comm:.1f}% — good for resource stocks")
+        elif avg_comm < -2:
+            earned += 0
+            notes.append(f"⚠️ Commodities down avg {avg_comm:.1f}% — pressure on mining/energy stocks")
+        else:
+            earned += 10
+            notes.append(f"➡️ Commodities mixed ({avg_comm:+.1f}% avg)")
+
+    # 5. Stock breadth (weight: 15)
     above = sum(1 for s in ihsg_data.values() if not s.empty and len(s) >= 50 and latest(s) > dma(s, 50))
     total = sum(1 for s in ihsg_data.values() if not s.empty and len(s) >= 50)
+    max_points += 15
     if total > 0:
         pct = above / total
         if pct >= 0.6:
-            score += 10
-            notes.append(f"✅ {above}/{total} stocks above 50-day average — broad market strength")
+            earned += 15
+            notes.append(f"✅ {above}/{total} stocks above 50-day average — broad strength")
         elif pct <= 0.35:
-            score -= 10
-            notes.append(f"⚠️ Only {above}/{total} stocks above 50-day average — market is weak")
+            earned += 0
+            notes.append(f"⚠️ Only {above}/{total} stocks above 50-day average — market weak")
         else:
-            notes.append(f"➡️ {above}/{total} stocks above 50-day average — mixed market")
-    return max(0, min(100, score)), notes
+            earned += 7
+            notes.append(f"➡️ {above}/{total} stocks above 50-day average — mixed")
 
-mkt_score, mkt_notes = market_signal()
+    final_score = (earned / max_points * 100) if max_points > 0 else 50
+    return max(0, min(100, final_score)), notes
+
+mkt_score, mkt_notes = master_signal()
 em, sl = signal_label(mkt_score)
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -242,6 +317,7 @@ em, sl = signal_label(mkt_score)
 # ══════════════════════════════════════════════════════════════════════════════
 if view == "📊 Overview":
     st.title("📊 Market Overview")
+    st.caption(f"Updated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
@@ -249,18 +325,20 @@ if view == "📊 Overview":
         st.progress(int(mkt_score) / 100)
         st.metric("Market Health Score", f"{mkt_score:.0f} / 100")
         if mkt_score >= 65:
-            st.success("Conditions look good. Market is healthy and trending up.")
+            st.success("Conditions look good across stocks, Rupiah, commodities and China demand.")
         elif mkt_score >= 45:
             st.warning("Mixed signals. Don't make big moves — wait for clarity.")
         else:
-            st.error("Conditions unfavorable. Be careful adding new positions.")
+            st.error("Multiple warning signs. Be careful adding new positions.")
 
     st.markdown("---")
-    st.markdown("### What the market is saying")
+    st.markdown("### What's driving the market")
     for n in mkt_notes:
         st.markdown(n)
 
     st.markdown("---")
+
+    # IDX + Rupiah
     col1, col2 = st.columns(2)
     with col1:
         idx_now = latest(idx_data)
@@ -268,8 +346,7 @@ if view == "📊 Overview":
         st.metric("IDX Composite (Jakarta)", f"{idx_now:,.0f}" if not np.isnan(idx_now) else "—",
                   delta=f"{idx_1m:+.1f}% (1 month)" if not np.isnan(idx_1m) else None)
         if not idx_data.empty:
-            st.plotly_chart(make_chart(idx_data, "IDX", "#3b82f6", height=240), use_container_width=True)
-
+            st.plotly_chart(make_chart(idx_data, "IDX", "#3b82f6", height=220), use_container_width=True)
     with col2:
         idr_now = latest(idr_data)
         idr_1m  = roc(idr_data, 21)
@@ -278,8 +355,25 @@ if view == "📊 Overview":
                   delta=f"{idr_1m:+.1f}% (1 month)" if not np.isnan(idr_1m) else None,
                   delta_color="inverse")
         if not idr_data.empty:
-            st.plotly_chart(make_chart(idr_data, "USD/IDR", "#ef4444", show_50=False, height=240),
+            st.plotly_chart(make_chart(idr_data, "USD/IDR", "#ef4444", show_50=False, height=220),
                             use_container_width=True)
+
+    st.markdown("---")
+    st.markdown("### 🛢️ Key Commodities")
+    comm_cols = st.columns(3)
+    comm_display = ["Coal (Newcastle)", "Nickel", "Copper", "Crude Oil", "Palm Oil (CPO)", "Gold"]
+    for i, name in enumerate(comm_display):
+        series = comm_data.get(name, pd.Series(dtype=float))
+        with comm_cols[i % 3]:
+            p   = latest(series)
+            r1m = roc(series, 21)
+            r1w = roc(series, 5)
+            sc  = stock_score(series)
+            e2, sl2 = signal_label(sc)
+            st.metric(name,
+                      f"${p:,.2f}" if not np.isnan(p) else "—",
+                      delta=f"{r1m:+.1f}% (1mo)" if not np.isnan(r1m) else None)
+            st.caption(f"{e2} {sl2}")
 
     st.markdown("---")
     st.markdown("### ₿ Crypto Today")
@@ -294,12 +388,12 @@ if view == "📊 Overview":
             st.metric(name, f"${p:,.2f}" if not np.isnan(p) else "—",
                       delta=f"{r1d:+.2f}% today" if not np.isnan(r1d) else None)
             st.caption(f"1 month: {r1m:+.1f}%" if not np.isnan(r1m) else "")
-            st.caption(f"{e2} {sl2} (score: {sc:.0f})" if not np.isnan(sc) else "")
+            st.caption(f"{e2} {sl2}")
 
 # ══════════════════════════════════════════════════════════════════════════════
-# ALL STOCKS
+# STOCKS
 # ══════════════════════════════════════════════════════════════════════════════
-elif view == "🏦 All Stocks":
+elif view == "🏦 Stocks":
     st.title("🏦 Top 45 IHSG Stocks")
 
     rows = []
@@ -329,7 +423,7 @@ elif view == "🏦 All Stocks":
     with col1:
         search = st.text_input("🔍 Search", "")
     with col2:
-        sig_f = st.selectbox("Filter", ["All signals", "🟢 BUY only", "🟡 HOLD only", "🔴 WAIT only"])
+        sig_f = st.selectbox("Filter", ["All", "🟢 BUY only", "🟡 HOLD only", "🔴 WAIT only"])
 
     filtered = df.copy()
     if search:
@@ -344,7 +438,7 @@ elif view == "🏦 All Stocks":
     st.dataframe(filtered, use_container_width=True, hide_index=True)
 
     st.markdown("---")
-    st.markdown("### 📊 Individual Stock Chart")
+    st.markdown("### 📊 Stock Chart")
     selected = st.selectbox("Choose a stock", list(TOP45_IHSG.keys()))
     series = ihsg_data[selected]
     if not series.empty:
@@ -354,17 +448,109 @@ elif view == "🏦 All Stocks":
         st.metric(selected, f"Rp {latest(series):,.0f}",
                   delta=f"{r1m:+.1f}% (1 month)" if not np.isnan(r1m) else None)
         color = "#22c55e" if sc >= 65 else "#f59e0b" if sc >= 45 else "#ef4444"
-        fig = make_chart(series, selected, color=color, height=320)
+        fig = make_chart(series, selected, color=color, show_20=True, show_50=True, height=320)
         fig.update_layout(title=f"{selected} — {e2} {sl2} (Score: {sc:.0f})")
         st.plotly_chart(fig, use_container_width=True)
         if sc >= 65:
-            st.success(f"{e2} {sl2}: This stock is above its averages and trending positively.")
+            st.success(f"{e2} Trending positively — above key averages.")
         elif sc >= 45:
-            st.warning(f"{e2} {sl2}: Mixed signals. Don't rush in — watch for a few more days.")
+            st.warning(f"{e2} Mixed signals — watch before adding.")
         else:
-            st.error(f"{e2} {sl2}: Stock is weak. Better to wait before buying more.")
+            st.error(f"{e2} Weak — better to wait before buying more.")
     else:
-        st.warning(f"No data available for {selected}")
+        st.warning(f"No data for {selected}")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMMODITIES
+# ══════════════════════════════════════════════════════════════════════════════
+elif view == "🛢️ Commodities":
+    st.title("🛢️ Commodities Dashboard")
+    st.caption("These drive Indonesian mining, energy and plantation stocks")
+
+    # Which stocks are affected by each commodity
+    COMMODITY_STOCKS = {
+        "Coal (Newcastle)": ["Bayan Coal", "Adaro", "Bukit Asam", "Harum Energy", "Indika Energy"],
+        "Nickel":           ["Vale Indonesia", "Aneka Tambang", "Merdeka Copper"],
+        "Copper":           ["Merdeka Copper", "Aneka Tambang"],
+        "Crude Oil":        ["Medco Energy", "Elnusa"],
+        "Palm Oil (CPO)":   ["Astra", "Indofood", "Indofood CB"],
+        "Gold":             ["Aneka Tambang"],
+    }
+
+    for name, series in comm_data.items():
+        st.markdown(f"### {name}")
+        p   = latest(series)
+        r1d = roc(series, 1)
+        r1w = roc(series, 5)
+        r1m = roc(series, 21)
+        sc  = stock_score(series)
+        e2, sl2 = signal_label(sc)
+
+        c1, c2, c3, c4 = st.columns(4)
+        with c1: st.metric("Price", f"${p:,.2f}" if not np.isnan(p) else "—",
+                            delta=f"{r1d:+.2f}% today" if not np.isnan(r1d) else None)
+        with c2: st.metric("1 Week", f"{r1w:+.1f}%" if not np.isnan(r1w) else "—")
+        with c3: st.metric("1 Month", f"{r1m:+.1f}%" if not np.isnan(r1m) else "—")
+        with c4: st.metric("Signal", f"{e2} {sl2}")
+
+        affected = COMMODITY_STOCKS.get(name, [])
+        if affected:
+            st.caption(f"📌 Affects: {', '.join(affected)}")
+
+        if not series.empty:
+            color = "#22c55e" if sc >= 65 else "#f59e0b" if sc >= 45 else "#ef4444"
+            st.plotly_chart(make_chart(series, name, color=color, height=240),
+                            use_container_width=True)
+        st.markdown("---")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MACRO
+# ══════════════════════════════════════════════════════════════════════════════
+elif view == "🌏 Macro":
+    st.title("🌏 Macro Indicators")
+    st.caption("Global factors that affect Indonesian stocks and the Rupiah")
+
+    MACRO_EXPLAIN = {
+        "USD/IDR":         "Rupiah vs Dollar. LOWER = stronger Rupiah = better for stocks. Rising = foreign money leaving Indonesia.",
+        "US Dollar Index": "Strength of the US dollar globally. Strong USD = pressure on all emerging markets including Indonesia.",
+        "China ETF (FXI)": "China stock market. When China grows, demand for Indonesian coal, nickel and palm oil rises.",
+        "EM ETF (EEM)":    "Emerging markets overall. If EEM is rising, foreign money is flowing into countries like Indonesia.",
+        "US 10Y Yield":    "US interest rates. High US rates = less reason for foreign investors to hold risky EM assets.",
+        "IDX Composite":   "Jakarta stock exchange index. The overall health of the Indonesian market.",
+    }
+
+    for name, series in macro_data.items():
+        st.markdown(f"### {name}")
+        st.caption(MACRO_EXPLAIN.get(name, ""))
+
+        p   = latest(series)
+        r1m = roc(series, 21)
+        r1w = roc(series, 5)
+        sc  = stock_score(series)
+
+        # Invert signal for USD/IDR and US yields (rising = bad for Indo)
+        if name in ["USD/IDR", "US 10Y Yield", "US Dollar Index"]:
+            display_score = 100 - sc if not np.isnan(sc) else sc
+        else:
+            display_score = sc
+
+        e2, sl2 = signal_label(display_score)
+
+        c1, c2, c3 = st.columns(3)
+        with c1:
+            st.metric(name, f"{p:,.2f}" if not np.isnan(p) else "—",
+                      delta=f"{r1m:+.1f}% (1mo)" if not np.isnan(r1m) else None,
+                      delta_color="inverse" if name in ["USD/IDR", "US 10Y Yield", "US Dollar Index"] else "normal")
+        with c2:
+            st.metric("1 Week", f"{r1w:+.1f}%" if not np.isnan(r1w) else "—")
+        with c3:
+            st.metric("Signal for Indo stocks", f"{e2} {sl2}")
+
+        if not series.empty:
+            color = "#22c55e" if display_score >= 65 else "#f59e0b" if display_score >= 45 else "#ef4444"
+            st.plotly_chart(make_chart(series, name, color=color, height=220),
+                            use_container_width=True)
+        st.markdown("---")
 
 # ══════════════════════════════════════════════════════════════════════════════
 # CRYPTO
@@ -390,17 +576,15 @@ elif view == "₿ Crypto":
 
         if not series.empty:
             color = "#22c55e" if sc >= 65 else "#f59e0b" if sc >= 45 else "#ef4444"
-            st.plotly_chart(
-                make_chart(series, name, color=color, show_50=True, show_200=True, height=300),
-                use_container_width=True
-            )
-
+            st.plotly_chart(make_chart(series, name, color=color,
+                                        show_50=True, show_200=True, height=300),
+                            use_container_width=True)
         if sc >= 65:
-            st.success(f"Crypto momentum is positive. Above key averages.")
+            st.success("Above key averages — momentum positive.")
         elif sc >= 45:
-            st.warning(f"Mixed signals. Watch before adding.")
+            st.warning("Mixed signals — watch before adding.")
         else:
-            st.error(f"Weak momentum. Be cautious.")
+            st.error("Weak momentum — be cautious.")
         st.markdown("---")
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -432,7 +616,7 @@ elif view == "📈 All Charts":
                                               showlegend=False))
                 fig.update_layout(
                     title=dict(text=f"{name}  {e2} {sc:.0f}", font=dict(size=11, color=color)),
-                    height=175, margin=dict(l=5, r=5, t=28, b=5),
+                    height=175, margin=dict(l=5,r=5,t=28,b=5),
                     paper_bgcolor="#0e1117", plot_bgcolor="#0e1117",
                     font=dict(color="#fafafa", size=9),
                     xaxis=dict(gridcolor="#1f2937", showticklabels=False),
