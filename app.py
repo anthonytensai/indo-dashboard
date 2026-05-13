@@ -555,7 +555,7 @@ macro_context = f"US macro: {us_macro_str} | Indonesia macro: {indo_macro_str}"
 # ══════════════════════════════════════════════════════════════════════════════
 if view == "🧠 AI Deep Analysis":
     st.title("🧠 AI Deep Stock Analysis")
-    st.caption("Institutional-grade analysis powered by Google Gemini")
+    st.caption("Institutional-grade analysis powered by Claude (Anthropic) · Search any stock worldwide")
 
     st.markdown("Enter any stock, crypto or ETF ticker:")
     col1, col2, col3 = st.columns([2, 1, 1])
